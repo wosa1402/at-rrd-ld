@@ -10,7 +10,7 @@ on:
 env:
   PAT_TOKEN: ${{ secrets.PAT_TOKEN }} # Workflows Update GitHub Action workflow files. Learn more.  read and write access to the repository contents.  classic s
   # 下面时间段按北京时间（UTC+8）定义，可按需修改
-  BJ_MORNING_START_HOUR: 7
+  BJ_MORNING_START_HOUR: 8
   BJ_MORNING_END_HOUR: 10
   BJ_EVENING_START_HOUR: 19
   BJ_EVENING_END_HOUR: 23
