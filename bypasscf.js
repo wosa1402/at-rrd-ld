@@ -19,6 +19,9 @@ import {
 
 dotenv.config();
 
+const runStartedAt = Date.now();
+let exitRequested = false;
+
 // 捕获未处理的异常/Promise拒绝，避免因 Target closed 之类错误导致进程退出
 process.on("unhandledRejection", (reason) => {
   try {
@@ -58,7 +61,10 @@ if (fs.existsSync(".env.local")) {
 }
 
 // 读取以分钟为单位的运行时间限制
-const runTimeLimitMinutes = process.env.RUN_TIME_LIMIT_MINUTES || 20;
+const runTimeLimitMinutes = (() => {
+  const v = Number.parseInt(process.env.RUN_TIME_LIMIT_MINUTES || "20", 10);
+  return Number.isFinite(v) && v > 0 ? v : 20;
+})();
 
 // 将分钟转换为毫秒
 const runTimeLimitMillis = runTimeLimitMinutes * 60 * 1000;
@@ -70,7 +76,7 @@ console.log(
 // 设置一个定时器，在运行时间到达时终止进程
 const shutdownTimer = setTimeout(() => {
   console.log("时间到,Reached time limit, shutting down the process...");
-  process.exit(0); // 退出进程
+  gracefulExit(0, "阅读完成（达到运行时长上限）");
 }, runTimeLimitMillis);
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -202,6 +208,67 @@ async function sendToTelegramGroup(message) {
   }
 }
 
+function getGitHubRunUrl() {
+  const serverUrl = process.env.GITHUB_SERVER_URL;
+  const repository = process.env.GITHUB_REPOSITORY;
+  const runId = process.env.GITHUB_RUN_ID;
+  if (!serverUrl || !repository || !runId) return "";
+  return `${serverUrl}/${repository}/actions/runs/${runId}`;
+}
+
+async function notifyRunStart() {
+  if (!token || !chatId) return;
+  const runUrl = getGitHubRunUrl();
+  const msg = [
+    `开始自动阅读：本次预计运行 ${runTimeLimitMinutes} 分钟`,
+    `账号数：${totalAccounts}，并发：${maxConcurrentAccounts}`,
+    `站点：${loginUrl}`,
+    runUrl ? `Run：${runUrl}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  await sendToTelegram(msg);
+}
+
+async function notifyRunEnd(reason) {
+  if (!token || !chatId) return;
+  const elapsedMinutes = Math.max(
+    0,
+    Math.round((Date.now() - runStartedAt) / 60000)
+  );
+  const runUrl = getGitHubRunUrl();
+  const msg = [
+    `自动阅读结束：${reason}`,
+    `计划时长：${runTimeLimitMinutes} 分钟，实际约：${elapsedMinutes} 分钟`,
+    runUrl ? `Run：${runUrl}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  await sendToTelegram(msg);
+}
+
+async function gracefulExit(code, reason) {
+  if (exitRequested) return;
+  exitRequested = true;
+  try {
+    clearTimeout(shutdownTimer);
+  } catch {}
+  try {
+    await notifyRunEnd(reason);
+  } finally {
+    process.exit(code);
+  }
+}
+
+process.on("SIGTERM", () => {
+  console.warn("收到 SIGTERM，准备退出...");
+  gracefulExit(0, "收到 SIGTERM（可能是手动取消或作业超时）");
+});
+process.on("SIGINT", () => {
+  console.warn("收到 SIGINT，准备退出...");
+  gracefulExit(0, "收到 SIGINT");
+});
+
 //随机等待时间
 function delayClick(time) {
   return new Promise(function (resolve) {
@@ -215,6 +282,7 @@ function delayClick(time) {
       console.log(usernames.length, passwords.length);
       throw new Error("用户名和密码的数量不匹配！");
     }
+    await notifyRunStart();
 
     // 并发启动浏览器实例进行登录
     const loginTasks = usernames.map((username, index) => {
