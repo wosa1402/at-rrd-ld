@@ -12,6 +12,8 @@ env:
   # 下面时间段按北京时间（UTC+8）定义，可按需修改
   BJ_MORNING_START_HOUR: 8
   BJ_MORNING_END_HOUR: 10
+  BJ_AFTERNOON_START_HOUR: 15
+  BJ_AFTERNOON_END_HOUR: 16
   BJ_EVENING_START_HOUR: 19
   BJ_EVENING_END_HOUR: 23
 permissions:
@@ -35,6 +37,11 @@ jobs:
           MORNING_MIN=$((RANDOM % 60))
           MORNING_UTC_HOUR=$(( (MORNING_HOUR + 24 - 8) % 24 ))
 
+          # 下午（北京时间）
+          AFTERNOON_HOUR=$((RANDOM % (BJ_AFTERNOON_END_HOUR - BJ_AFTERNOON_START_HOUR + 1) + BJ_AFTERNOON_START_HOUR))
+          AFTERNOON_MIN=$((RANDOM % 60))
+          AFTERNOON_UTC_HOUR=$(( (AFTERNOON_HOUR + 24 - 8) % 24 ))
+
           # 晚上（北京时间）
           EVENING_HOUR=$((RANDOM % (BJ_EVENING_END_HOUR - BJ_EVENING_START_HOUR + 1) + BJ_EVENING_START_HOUR))
           EVENING_MIN=$((RANDOM % 60))
@@ -44,17 +51,23 @@ jobs:
           echo "morning_min=$MORNING_MIN" >> $GITHUB_OUTPUT
           echo "morning_utc_hour=$MORNING_UTC_HOUR" >> $GITHUB_OUTPUT
 
+          echo "afternoon_hour=$AFTERNOON_HOUR" >> $GITHUB_OUTPUT
+          echo "afternoon_min=$AFTERNOON_MIN" >> $GITHUB_OUTPUT
+          echo "afternoon_utc_hour=$AFTERNOON_UTC_HOUR" >> $GITHUB_OUTPUT
+
           echo "evening_hour=$EVENING_HOUR" >> $GITHUB_OUTPUT
           echo "evening_min=$EVENING_MIN" >> $GITHUB_OUTPUT
           echo "evening_utc_hour=$EVENING_UTC_HOUR" >> $GITHUB_OUTPUT
 
           echo "早上：北京时间 ${MORNING_HOUR}:${MORNING_MIN} -> UTC ${MORNING_UTC_HOUR}:${MORNING_MIN}"
+          echo "下午：北京时间 ${AFTERNOON_HOUR}:${AFTERNOON_MIN} -> UTC ${AFTERNOON_UTC_HOUR}:${AFTERNOON_MIN}"
           echo "晚上：北京时间 ${EVENING_HOUR}:${EVENING_MIN} -> UTC ${EVENING_UTC_HOUR}:${EVENING_MIN}"
 
       - name: replace cron expression
         run: |
-          # 只更新 readLike（cron_bypassCF.yaml）里带标记的两行
+          # 只更新 readLike（cron_bypassCF.yaml）里带标记的三行
           sed -i "s/^[[:space:]]*- cron:.*# auto-cron-morning.*$/    - cron: '${{ steps.random.outputs.morning_min }} ${{ steps.random.outputs.morning_utc_hour }} * * *' # auto-cron-morning/" .github/workflows/cron_bypassCF.yaml
+          sed -i "s/^[[:space:]]*- cron:.*# auto-cron-afternoon.*$/    - cron: '${{ steps.random.outputs.afternoon_min }} ${{ steps.random.outputs.afternoon_utc_hour }} * * *' # auto-cron-afternoon/" .github/workflows/cron_bypassCF.yaml
           sed -i "s/^[[:space:]]*- cron:.*# auto-cron-evening.*$/    - cron: '${{ steps.random.outputs.evening_min }} ${{ steps.random.outputs.evening_utc_hour }} * * *' # auto-cron-evening/" .github/workflows/cron_bypassCF.yaml
 
       - name: Check PAT
@@ -66,7 +79,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git diff --cached --quiet || git commit -m "update cron bj-morning=${{ steps.random.outputs.morning_hour }}:${{ steps.random.outputs.morning_min }} bj-evening=${{ steps.random.outputs.evening_hour }}:${{ steps.random.outputs.evening_min }}"
+          git diff --cached --quiet || git commit -m "update cron bj-morning=${{ steps.random.outputs.morning_hour }}:${{ steps.random.outputs.morning_min }} bj-afternoon=${{ steps.random.outputs.afternoon_hour }}:${{ steps.random.outputs.afternoon_min }} bj-evening=${{ steps.random.outputs.evening_hour }}:${{ steps.random.outputs.evening_min }}"
           git push "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
 
        
