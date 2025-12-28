@@ -2,15 +2,16 @@ name: readLike（自动阅读随机点赞）
 # GitHub.secrets优先级最高，即使没有设置对应的变量，它也会读取，这时变量为空值，导致报错，.env读取的变量无法覆盖这个值,使用了${PASSWORD_ESCAPED//\#/\\#}来对#转义,需要两个\，但是我直接在env文件使用这种方法是不行的，GitHub action是有效
 on:
   schedule:
-    # 每天早上/晚上各跑一次（北京时间随机生成后转为 UTC 写入），由 Update Workflow Cron 自动更新
-    - cron: '57 0 * * *' # auto-cron-morning
-    - cron: '34 12 * * *' # auto-cron-evening
+    # 每天早上/下午/晚上各跑一次（北京时间随机生成后转为 UTC 写入），由 Update Workflow Cron 自动更新
+    - cron: "0 0 * * *" # auto-cron-morning
+    - cron: "0 7 * * *" # auto-cron-afternoon
+    - cron: "26 10 * * *" # auto-cron-evening
   workflow_dispatch: # 允许手动触发
 
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 80 # 设置作业超时时间为20分钟
+    timeout-minutes: 120 # 随机运行时长最高 90 分钟，预留安装依赖时间
 
     strategy:
       matrix:
@@ -62,6 +63,50 @@ jobs:
       - name: Install dependencies
         run: |
           npm install
+
+      - name: Randomize run time (20-90min, afternoon <= 40min)
+        env:
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        shell: pwsh
+        run: |
+          $workflowPath = ".github/workflows/cron_bypassCF.yaml"
+          $content = Get-Content $workflowPath -Raw
+
+          function Get-CronByMarker([string]$text, [string]$marker) {
+            $pattern = "-\\s*cron:\\s*[\"']?([^\"'\\r\\n]+)[\"']?\\s*#\\s*${marker}\\b"
+            $m = [regex]::Match($text, $pattern)
+            if ($m.Success) {
+              return $m.Groups[1].Value.Trim()
+            }
+            return $null
+          }
+
+          $morningCron = Get-CronByMarker $content "auto-cron-morning"
+          $afternoonCron = Get-CronByMarker $content "auto-cron-afternoon"
+          $eveningCron = Get-CronByMarker $content "auto-cron-evening"
+          $schedule = $env:EVENT_SCHEDULE
+          if ($null -eq $schedule) { $schedule = "" }
+          $schedule = $schedule.Trim()
+
+          $minMinutes = 20
+          $maxMinutes = 90
+          $slot = "unknown"
+
+          if ($schedule -and $afternoonCron -and $schedule -eq $afternoonCron) {
+            $maxMinutes = 40
+            $slot = "afternoon"
+          } elseif ($schedule -and $morningCron -and $schedule -eq $morningCron) {
+            $slot = "morning"
+          } elseif ($schedule -and $eveningCron -and $schedule -eq $eveningCron) {
+            $slot = "evening"
+          } elseif (-not $schedule) {
+            $slot = "manual"
+          }
+
+          $selected = Get-Random -Minimum $minMinutes -Maximum ($maxMinutes + 1)
+          "RUN_TIME_LIMIT_MINUTES=$selected" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Triggered cron: '$schedule' (slot=$slot)"
+          Write-Host "Random RUN_TIME_LIMIT_MINUTES: $selected (range: $minMinutes-$maxMinutes)"
 
       - name: Run a script
         run: node bypasscf.js
