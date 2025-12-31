@@ -159,7 +159,12 @@
         document.body.offsetHeight - 100
       ) {
         console.log("已滚动到底部");
-        openNewTopic();
+        // 到达底部再处理点赞：此时页面内容更完整，且跳转前点赞更容易真正写入站内记录
+        if (isAutoLikeEnabled()) {
+          stableLikeAndNextTopic();
+        } else {
+          openNewTopic();
+        }
       } else {
         scrollToBottomSlowly();
         if (checkScrollTimeout !== null) {
@@ -179,14 +184,11 @@
       "autoLikeEnabled",
       localStorage.getItem("autoLikeEnabled")
     );
-    if (localStorage.getItem("read") === "true") {
-      console.log("执行正常的滚动和检查逻辑");
-      checkScroll();
-      if (isAutoLikeEnabled()) {
-        autoLike();
-      }
-    }
-  });
+     if (localStorage.getItem("read") === "true") {
+       console.log("执行正常的滚动和检查逻辑");
+       checkScroll();
+     }
+   });
 
   // 获取当前时间戳
   const currentTime = Date.now();
@@ -218,57 +220,137 @@
     button.dispatchEvent(event);
   }
 
-  function autoLike() {
-    console.log(`Initial clickCounter: ${clickCounter}`);
-    // 寻找所有的discourse-reactions-reaction-button
-    const buttons = document.querySelectorAll(
-      ".discourse-reactions-reaction-button"
+  // 稳定点赞策略：更适合自动阅读（频繁跳转话题）的场景
+  // - 不再在页面 load 时批量排队点赞（容易在跳转时被打断）
+  // - 改为“到达话题底部、准备跳转前”最多点赞 1 次
+  // - 默认每 2~4 个话题点赞 1 次（大约 2 小时 30~50 个，且波动更小）
+  function getRandomIntInclusive(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  function getAutoLikeEveryTopicsRange() {
+    const min = Number.parseInt(
+      localStorage.getItem("autoLikeEveryTopicsMin") || "2",
+      10
     );
-    if (buttons.length === 0) {
-      console.error(
-        "No buttons found with the selector '.discourse-reactions-reaction-button'"
-      );
+    const max = Number.parseInt(
+      localStorage.getItem("autoLikeEveryTopicsMax") || "4",
+      10
+    );
+
+    const safeMin = Number.isFinite(min) && min > 0 ? min : 2;
+    const safeMax = Number.isFinite(max) && max >= safeMin ? max : safeMin;
+    return { min: safeMin, max: safeMax };
+  }
+
+  function resetTopicsUntilNextLike() {
+    const { min, max } = getAutoLikeEveryTopicsRange();
+    const value = getRandomIntInclusive(min, max);
+    localStorage.setItem("autoLikeTopicsUntilNext", String(value));
+    return value;
+  }
+
+  function decrementTopicsUntilNextLike() {
+    let remaining = Number.parseInt(
+      localStorage.getItem("autoLikeTopicsUntilNext") || "",
+      10
+    );
+    if (!Number.isFinite(remaining) || remaining <= 0) {
+      remaining = resetTopicsUntilNextLike();
+    }
+    remaining -= 1;
+    localStorage.setItem("autoLikeTopicsUntilNext", String(remaining));
+    return remaining;
+  }
+
+  function getEligibleLikeButtons() {
+    const buttons = Array.from(
+      document.querySelectorAll(".discourse-reactions-reaction-button")
+    );
+
+    return buttons.filter((button) => {
+      if (!button) return false;
+      if (
+        button.title !== "点赞此帖子" &&
+        button.title !== "Like this post"
+      ) {
+        return false;
+      }
+      if (button.disabled) return false;
+      if (button.getAttribute("aria-disabled") === "true") return false;
+      return true;
+    });
+  }
+
+  function getVisibleButtons(buttons) {
+    return buttons.filter((button) => {
+      try {
+        const rect = button.getBoundingClientRect();
+        if (!rect) return false;
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        return rect.bottom >= 0 && rect.top <= window.innerHeight;
+      } catch (e) {
+        return false;
+      }
+    });
+  }
+
+  function pickRandomItem(items) {
+    return items[Math.floor(Math.random() * items.length)];
+  }
+
+  function tryStableLikeOnce() {
+    if (clickCounter >= likeLimit) {
+      console.log("已达到点赞上限，跳过点赞");
+      localStorage.setItem("autoLikeEnabled", "false");
+      return false;
+    }
+
+    const candidates = getEligibleLikeButtons();
+    if (candidates.length === 0) {
+      console.log("未找到可点赞按钮，跳过");
+      return false;
+    }
+
+    const visible = getVisibleButtons(candidates);
+    const pool = visible.length > 0 ? visible : candidates;
+
+    const button = pickRandomItem(pool);
+    triggerClick(button);
+
+    clickCounter += 1;
+    localStorage.setItem("clickCounter", clickCounter.toString());
+    console.log(`稳定点赞成功：${clickCounter}/${likeLimit}`);
+
+    if (clickCounter >= likeLimit) {
+      localStorage.setItem("autoLikeEnabled", "false");
+      console.log("已达到点赞上限，自动关闭点赞");
+    }
+
+    return true;
+  }
+
+  function stableLikeAndNextTopic() {
+    const remaining = decrementTopicsUntilNextLike();
+    if (remaining > 0) {
+      // 还没到点赞时机，直接跳到下一个话题
+      openNewTopic();
       return;
     }
-    console.log(`Found ${buttons.length} buttons.`); // 调试信息
 
-    // 逐个点击找到的按钮
-    buttons.forEach((button, index) => {
-      if (
-        (button.title !== "点赞此帖子" && button.title !== "Like this post") ||
-        clickCounter >= likeLimit
-      ) {
-        return;
-      }
+    const liked = tryStableLikeOnce();
+    if (liked) {
+      resetTopicsUntilNextLike();
+    } else {
+      // 如果本话题没有找到可点赞按钮，下个话题尽快再尝试一次
+      localStorage.setItem("autoLikeTopicsUntilNext", "1");
+    }
 
-      // 新增：点赞前加一个随机概率判断（如30%概率）
-      const likeProbability = 0.3; // 0~1之间，0.3表示30%概率
-      if (Math.random() > likeProbability) {
-        console.log(`跳过第${index + 1}个按钮（未通过概率判断）`);
-        return;
-      }
-
-      // 点赞间隔时间也随机（2~5秒之间）
-      const randomDelay = 2000 + Math.floor(Math.random() * 3000);
-
-      autoLikeInterval = setTimeout(() => {
-        // 模拟点击
-        triggerClick(button); // 使用自定义的触发点击方法
-        console.log(`Clicked like button ${index + 1}`);
-        clickCounter++; // 更新点击计数器
-        // 将新的点击计数存储到localStorage
-        localStorage.setItem("clickCounter", clickCounter.toString());
-        // 如果点击次数达到likeLimit次，则设置点赞变量为false
-        if (clickCounter === likeLimit) {
-          console.log(
-            `Reached ${likeLimit} likes, setting the like variable to false.`
-          );
-          localStorage.setItem("autoLikeEnabled", "false"); // 使用localStorage存储点赞变量状态
-        } else {
-          console.log("clickCounter:", clickCounter);
-        }
-      }, index * randomDelay); // 每次点赞的延迟为随机值
-    });
+    // 给站内请求一点时间，避免跳转太快导致点赞没写入
+    const waitMs = getRandomIntInclusive(1200, 2500);
+    setTimeout(() => {
+      openNewTopic();
+    }, waitMs);
   }
   const button = document.createElement("button");
   // 初始化按钮文本基于当前的阅读状态
@@ -338,6 +420,18 @@
   });
   // 判断是否启用自动点赞
   function isAutoLikeEnabled() {
+    // 429 等情况下会设置一个“冷却期”，冷却期内暂不点赞，到点后自动恢复
+    const cooldownUntil = Number.parseInt(
+      localStorage.getItem("autoLikeCooldownUntil") || "0",
+      10
+    );
+    if (Number.isFinite(cooldownUntil) && cooldownUntil > 0) {
+      if (cooldownUntil > Date.now()) {
+        return false;
+      }
+      localStorage.removeItem("autoLikeCooldownUntil");
+    }
+
     // 从localStorage获取autoLikeEnabled的值，如果未设置，默认为"true"
     return localStorage.getItem("autoLikeEnabled") !== "false";
   }
