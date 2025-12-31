@@ -93,6 +93,8 @@ const delayBetweenBatches =
   runTimeLimitMillis / Math.ceil(totalAccounts / maxConcurrentAccounts);
 const isLikeSpecificUser = process.env.LIKE_SPECIFIC_USER || "false";
 const isAutoLike = process.env.AUTO_LIKE || "true";
+const autoLikeEveryTopicsMin = process.env.AUTO_LIKE_EVERY_TOPICS_MIN || "";
+const autoLikeEveryTopicsMax = process.env.AUTO_LIKE_EVERY_TOPICS_MAX || "";
 const enableRssFetch = (process.env.ENABLE_RSS_FETCH || "false") === "true"; // 是否开启抓取RSS，没有设置时默认为false
 const enableTopicDataFetch = (process.env.ENABLE_TOPIC_DATA_FETCH || "false") === "true"; // 是否开启抓取话题数据，没有设置时默认为false
 
@@ -416,7 +418,7 @@ async function launchBrowserForUser(username, password) {
         page._isReloaded = true;
         //由于油候脚本它这个时候可能会导航到新的网页,会导致直接执行代码报错,所以使用这个来在每个新网页加载之前来执行
         try {
-          await page.evaluateOnNewDocument(() => {
+          await page.evaluate(() => {
             localStorage.setItem("autoLikeEnabled", "false");
           });
         } catch (e) {
@@ -483,17 +485,45 @@ async function launchBrowserForUser(username, password) {
     // 在每个新的文档加载时执行外部脚本
     await page.evaluateOnNewDocument(
       (...args) => {
-        const [specificUser, scriptToEval, isAutoLike] = args;
+        const [
+          specificUser,
+          scriptToEval,
+          isAutoLike,
+          autoLikeEveryTopicsMin,
+          autoLikeEveryTopicsMax,
+        ] = args;
         localStorage.setItem("read", true);
         localStorage.setItem("specificUser", specificUser);
         localStorage.setItem("isFirstRun", "false");
         localStorage.setItem("autoLikeEnabled", isAutoLike);
+        if (
+          autoLikeEveryTopicsMin !== undefined &&
+          autoLikeEveryTopicsMin !== null &&
+          String(autoLikeEveryTopicsMin).trim() !== ""
+        ) {
+          localStorage.setItem(
+            "autoLikeEveryTopicsMin",
+            String(autoLikeEveryTopicsMin)
+          );
+        }
+        if (
+          autoLikeEveryTopicsMax !== undefined &&
+          autoLikeEveryTopicsMax !== null &&
+          String(autoLikeEveryTopicsMax).trim() !== ""
+        ) {
+          localStorage.setItem(
+            "autoLikeEveryTopicsMax",
+            String(autoLikeEveryTopicsMax)
+          );
+        }
         console.log("当前点赞用户：", specificUser);
         eval(scriptToEval);
       },
       specificUser,
       externalScript,
-      isAutoLike
+      isAutoLike,
+      autoLikeEveryTopicsMin,
+      autoLikeEveryTopicsMax
     ); //变量必须从外部显示的传入, 因为在浏览器上下文它是读取不了的
     // 添加一个监听器来监听每次页面加载完成的事件
     page.on("load", async () => {
@@ -519,19 +549,47 @@ async function launchBrowserForUser(username, password) {
     // Ensure automation injected after navigation (fallback in case init-script failed)
     try {
       await page.evaluate(
-        (specificUser, scriptToEval, isAutoLike) => {
+        (
+          specificUser,
+          scriptToEval,
+          isAutoLike,
+          autoLikeEveryTopicsMin,
+          autoLikeEveryTopicsMax
+        ) => {
           if (!window.__autoInjected) {
             localStorage.setItem("read", true);
             localStorage.setItem("specificUser", specificUser);
             localStorage.setItem("isFirstRun", "false");
             localStorage.setItem("autoLikeEnabled", isAutoLike);
+            if (
+              autoLikeEveryTopicsMin !== undefined &&
+              autoLikeEveryTopicsMin !== null &&
+              String(autoLikeEveryTopicsMin).trim() !== ""
+            ) {
+              localStorage.setItem(
+                "autoLikeEveryTopicsMin",
+                String(autoLikeEveryTopicsMin)
+              );
+            }
+            if (
+              autoLikeEveryTopicsMax !== undefined &&
+              autoLikeEveryTopicsMax !== null &&
+              String(autoLikeEveryTopicsMax).trim() !== ""
+            ) {
+              localStorage.setItem(
+                "autoLikeEveryTopicsMax",
+                String(autoLikeEveryTopicsMax)
+              );
+            }
             try { eval(scriptToEval); } catch (e) { console.error("eval external script failed", e); }
             window.__autoInjected = true;
           }
         },
         specificUser,
         externalScript,
-        isAutoLike
+        isAutoLike,
+        autoLikeEveryTopicsMin,
+        autoLikeEveryTopicsMax
       );
     } catch (e) {
       console.warn(`Post-navigation inject failed: ${e && e.message ? e.message : e}`);
