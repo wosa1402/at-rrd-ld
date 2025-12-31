@@ -10,6 +10,8 @@
 # 
 # 【功能开关】(可选)
 # AUTO_LIKE                  - 是否自动点赞 (true/false，默认: true)
+# AUTO_LIKE_EVERY_TOPICS_MIN  - 稳定点赞：每隔 N 个话题点 1 次（最小值，默认: 2）
+# AUTO_LIKE_EVERY_TOPICS_MAX  - 稳定点赞：每隔 N 个话题点 1 次（最大值，默认: 4）
 # LIKE_SPECIFIC_USER         - 是否只点赞特定用户 (true/false，默认: false)
 # ENABLE_RSS_FETCH           - 是否开启RSS抓取 (true/false，默认: false)
 # ENABLE_TOPIC_DATA_FETCH    - 是否开启话题数据抓取 (true/false，默认: false)
