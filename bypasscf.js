@@ -22,6 +22,64 @@ dotenv.config();
 const runStartedAt = Date.now();
 let exitRequested = false;
 
+const AUTO_LIKE_RECORD_PREFIX = "__AUTO_LIKE_RECORD__";
+const likeRecords = [];
+const likeCountByUser = new Map();
+const likeSeenKeys = new Set();
+
+function recordLikeEvent(username, url, ts) {
+  const u = (url || "").trim();
+  if (!u) return;
+
+  const userKey = (username || "unknown").trim() || "unknown";
+  const key = `${userKey}||${u}`;
+  if (likeSeenKeys.has(key)) return;
+  likeSeenKeys.add(key);
+
+  likeRecords.push({
+    username: userKey,
+    url: u,
+    ts: Number.isFinite(ts) ? ts : Date.now(),
+  });
+
+  likeCountByUser.set(userKey, (likeCountByUser.get(userKey) || 0) + 1);
+}
+
+function buildLikeSummaryLines(maxLen) {
+  const total = likeRecords.length;
+  if (total <= 0) return ["点赞：0"];
+
+  const lines = [];
+  lines.push(`点赞：${total}`);
+
+  if (likeCountByUser.size > 1) {
+    const parts = Array.from(likeCountByUser.entries())
+      .map(([u, c]) => `${u}=${c}`)
+      .join("，");
+    lines.push(`账号明细：${parts}`);
+  }
+
+  lines.push("点赞记录：");
+
+  const singleUser = likeCountByUser.size <= 1;
+  let omitted = 0;
+  for (const rec of likeRecords) {
+    const line = singleUser ? `- ${rec.url}` : `- ${rec.username}: ${rec.url}`;
+    const nextLen = (lines.join("\n") + "\n" + line).length;
+    if (Number.isFinite(maxLen) && maxLen > 0 && nextLen > maxLen) {
+      omitted += 1;
+      continue;
+    }
+    lines.push(line);
+  }
+
+  if (omitted > 0) {
+    lines.push(`（为避免 Telegram 单条消息超限，已省略 ${omitted} 条）`);
+  }
+
+  return lines;
+}
+
 // 捕获未处理的异常/Promise拒绝，避免因 Target closed 之类错误导致进程退出
 process.on("unhandledRejection", (reason) => {
   try {
@@ -239,13 +297,39 @@ async function notifyRunEnd(reason) {
     Math.round((Date.now() - runStartedAt) / 60000)
   );
   const runUrl = getGitHubRunUrl();
-  const msg = [
+
+  // Telegram 单条消息最长 4096 字符，为避免拆分（发多条），这里做截断控制
+  const TELEGRAM_SINGLE_MAX_LEN = 3800;
+
+  const baseLines = [
     `自动阅读结束：${reason}`,
     `计划时长：${runTimeLimitMinutes} 分钟，实际约：${elapsedMinutes} 分钟`,
-    runUrl ? `Run：${runUrl}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].filter(Boolean);
+
+  const runLine = runUrl ? `Run：${runUrl}` : "";
+  const baseLen = baseLines.join("\n").length;
+  const reserveForRun = runLine ? runLine.length + 1 : 0;
+  const remainingForLikes = Math.max(
+    0,
+    TELEGRAM_SINGLE_MAX_LEN - baseLen - reserveForRun - 1
+  );
+
+  const likeLines = buildLikeSummaryLines(remainingForLikes);
+
+  let lines = [...baseLines, ...likeLines, runLine].filter(Boolean);
+  let msg = lines.join("\n");
+
+  // 最后一层兜底：如果还是超长，只保留“点赞总数”
+  if (msg.length > TELEGRAM_SINGLE_MAX_LEN) {
+    const totalLikes = likeRecords.length;
+    const minimalLikeLines = [`点赞：${totalLikes}`];
+    lines = [...baseLines, ...minimalLikeLines, runLine].filter(Boolean);
+    msg = lines.join("\n");
+    if (msg.length > TELEGRAM_SINGLE_MAX_LEN) {
+      msg = msg.slice(0, TELEGRAM_SINGLE_MAX_LEN - 20) + "\n（内容过长已截断）";
+    }
+  }
+
   await sendToTelegram(msg);
 }
 
@@ -409,37 +493,56 @@ async function launchBrowserForUser(username, password) {
     });
     page.on("console", async (msg) => {
       // console.log("PAGE LOG:", msg.text());
+      const text = msg.text();
+
+      // 由 index.js 输出的点赞记录：统一汇总到结束通知里（避免多条 Telegram 消息）
+      if (text && text.startsWith(AUTO_LIKE_RECORD_PREFIX)) {
+        const payload = text.slice(AUTO_LIKE_RECORD_PREFIX.length);
+        try {
+          const data = JSON.parse(payload);
+          recordLikeEvent(username, data && data.url ? data.url : "", data && data.ts ? Number(data.ts) : Date.now());
+        } catch (e) {
+          recordLikeEvent(username, payload, Date.now());
+        }
+        return;
+      }
+
       // 使用一个标志变量来检测是否已经刷新过页面
       if (
         !page._isReloaded &&
-        msg.text().includes("the server responded with a status of 429")
+        text.includes("the server responded with a status of 429")
       ) {
         // 设置标志变量为 true，表示即将刷新页面
         page._isReloaded = true;
-        //由于油候脚本它这个时候可能会导航到新的网页,会导致直接执行代码报错,所以使用这个来在每个新网页加载之前来执行
+
+        // 429 时进入冷却期：冷却期内暂不点赞，到点自动恢复（避免永久禁用导致一天只点到很少）
+        const cooldownMinutesRaw = Number.parseInt(
+          process.env.AUTO_LIKE_COOLDOWN_MINUTES || "10",
+          10
+        );
+        const cooldownMinutes =
+          Number.isFinite(cooldownMinutesRaw) && cooldownMinutesRaw > 0
+            ? cooldownMinutesRaw
+            : 10;
+        const cooldownUntil = Date.now() + cooldownMinutes * 60 * 1000;
         try {
-          await page.evaluate(() => {
-            localStorage.setItem("autoLikeEnabled", "false");
-          });
-        } catch (e) {
-          // Fallback to immediate evaluate when target already navigated/closed
-          try {
-            if (!page.isClosed || !page.isClosed()) {
-              await page.evaluate(() => {
-                localStorage.setItem("autoLikeEnabled", "false");
-              });
-            }
-          } catch (e2) {
-            console.warn(
-              `Skip disabling autoLike due to closed target: ${
-                (e2 && e2.message) ? e2.message : e2
-              }`
-            );
+          if (!page.isClosed || !page.isClosed()) {
+            await page.evaluate((until) => {
+              try {
+                localStorage.setItem("autoLikeCooldownUntil", String(until));
+              } catch {}
+            }, cooldownUntil);
           }
+        } catch (e2) {
+          console.warn(
+            `Set autoLike cooldown failed: ${(e2 && e2.message) ? e2.message : e2}`
+          );
         }
         // 等待一段时间，比如 3 秒
         await new Promise((resolve) => setTimeout(resolve, 3000));
-        console.log("Retrying now...");
+        console.log(
+          `检测到 429，自动点赞进入冷却：${cooldownMinutes} 分钟（到点自动恢复）`
+        );
         // 尝试刷新页面
         // await page.reload();
       }
