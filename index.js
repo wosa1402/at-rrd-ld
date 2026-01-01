@@ -321,6 +321,13 @@
     clickCounter += 1;
     localStorage.setItem("clickCounter", clickCounter.toString());
     console.log(`稳定点赞成功：${clickCounter}/${likeLimit}`);
+    try {
+      const record = {
+        url: window.location.href,
+        ts: Date.now(),
+      };
+      console.log(`__AUTO_LIKE_RECORD__${JSON.stringify(record)}`);
+    } catch (e) {}
 
     if (clickCounter >= likeLimit) {
       localStorage.setItem("autoLikeEnabled", "false");
