@@ -3,9 +3,9 @@ name: readLike（自动阅读随机点赞）
 on:
   schedule:
     # 每天早上/下午/晚上各跑一次（北京时间随机生成后转为 UTC 写入），由 Update Workflow Cron 自动更新
-    - cron: '27 1 * * *' # auto-cron-morning
-    - cron: '20 8 * * *' # auto-cron-afternoon
-    - cron: '20 11 * * *' # auto-cron-evening
+    - cron: "0 0 * * *" # auto-cron-morning
+    - cron: "0 7 * * *" # auto-cron-afternoon
+    - cron: "26 10 * * *" # auto-cron-evening
   workflow_dispatch: # 允许手动触发
 
 jobs:
@@ -32,6 +32,7 @@ jobs:
       AUTO_LIKE: ${{ secrets.AUTO_LIKE }}
       AUTO_LIKE_EVERY_TOPICS_MIN: ${{ secrets.AUTO_LIKE_EVERY_TOPICS_MIN }}
       AUTO_LIKE_EVERY_TOPICS_MAX: ${{ secrets.AUTO_LIKE_EVERY_TOPICS_MAX }}
+      AUTO_LIKE_COOLDOWN_MINUTES: ${{ secrets.AUTO_LIKE_COOLDOWN_MINUTES }}
       ENABLE_RSS_FETCH: ${{ secrets.ENABLE_RSS_FETCH }}
       ENABLE_TOPIC_DATA_FETCH: ${{ secrets.ENABLE_TOPIC_DATA_FETCH }}
       HEALTH_PORT: ${{ secrets.HEALTH_PORT }}
