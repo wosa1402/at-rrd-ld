@@ -150,7 +150,8 @@ const totalAccounts = usernames.length; // 总的账号数
 const delayBetweenBatches =
   runTimeLimitMillis / Math.ceil(totalAccounts / maxConcurrentAccounts);
 const isLikeSpecificUser = process.env.LIKE_SPECIFIC_USER || "false";
-const isAutoLike = process.env.AUTO_LIKE || "true";
+// 自动阅读默认不点赞；如需开启，请在 Secrets 里设置 AUTO_LIKE=true
+const isAutoLike = process.env.AUTO_LIKE || "false";
 const autoLikeEveryTopicsMin = process.env.AUTO_LIKE_EVERY_TOPICS_MIN || "";
 const autoLikeEveryTopicsMax = process.env.AUTO_LIKE_EVERY_TOPICS_MAX || "";
 const enableRssFetch = (process.env.ENABLE_RSS_FETCH || "false") === "true"; // 是否开启抓取RSS，没有设置时默认为false
