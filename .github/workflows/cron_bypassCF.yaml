@@ -3,9 +3,9 @@ name: readLike（自动阅读随机点赞）
 on:
   schedule:
     # 每天早上/下午/晚上各跑一次（北京时间随机生成后转为 UTC 写入），由 Update Workflow Cron 自动更新
-    - cron: '36 0 * * *' # auto-cron-morning
-    - cron: '4 8 * * *' # auto-cron-afternoon
-    - cron: '32 15 * * *' # auto-cron-evening
+    - cron: '45 1 * * *' # auto-cron-morning
+    - cron: '57 8 * * *' # auto-cron-afternoon
+    - cron: '47 15 * * *' # auto-cron-evening
   workflow_dispatch: # 允许手动触发
 
 jobs:
